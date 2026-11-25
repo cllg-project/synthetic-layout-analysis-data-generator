@@ -15,6 +15,8 @@ class Page:
         self.ops = []        # ("t", x, ybase, text, font) | ("l", x0, y0, x1, y1, width)
         self.regions = []    # dict(id,type,lines[],extra[],header)
         self.lines = []
+        self.tag = None      # (band id, column) while a parallel-column band is being laid out
+        self.bands = 0
 
     # ---- primitives
     def region(self, rtype, header=False):
@@ -39,7 +41,7 @@ class Page:
         text = " ".join(w for w, _, _ in placed)
         ln = dict(id="line_%d" % len(self.lines), region=reg["id"], text=text, x0=x0, x1=x1, y=ybase,
                   poly=[[x0 - 1, ybase - top - 1], [x1 + 1, ybase - top - 1], [x1 + 1, ybase + bot + 1], [x0 - 1, ybase + bot + 1]],
-                  bl=[[x0, ybase], [x1, ybase]], header=reg["header"], size=S)
+                  bl=[[x0, ybase], [x1, ybase]], header=reg["header"], size=S, tag=self.tag)
         self.lines.append(ln)
         reg["lines"].append(ln)
         return ln
@@ -83,8 +85,10 @@ def wrap(words, width, space, indent=0.0, hang=0.0, justify=True, last_justify=F
 
 
 class Builder:
-    def __init__(self, rng, corpus, W=None):
+    def __init__(self, rng, corpus, W=None, parallel=0.0, parallel_only=False):
         self.rng, self.corpus = rng, corpus
+        self.parallel_only = parallel_only  # evaluation mode: prose pages only, always with a band
+        self.parallel = 1.0 if parallel_only else parallel  # probability that a prose page contains a two-column (parallel text) band
         W = W or rng.randint(1000, 1500)
         H = int(W * rng.uniform(1.32, 1.5))
         S = W / rng.uniform(32, 44)
@@ -97,6 +101,8 @@ class Builder:
     def build(self):
         rng, pg, S, W, H = self.rng, self.pg, self.S, self.pg.W, self.pg.H
         mode = rng.choices(["prose", "verse", "scholia"], [.45, .25, .30])[0]
+        if self.parallel_only:
+            mode = "prose"
         self.mode = mode
         marg_outer = rng.random() < .4
         self.mL = W * rng.uniform(.12, .16) if marg_outer else W * rng.uniform(.09, .14)
@@ -239,13 +245,16 @@ class Builder:
         cw = self.bw / nc
         f = pg.st.get("r")
         reg = pg.region("TableZone")
+        pg.bands += 1  # table cells share a tag: read column by column (see reading_order)
         for r in range(nr):
             yb = y0 + (r + .72) * self.lh * 1.15
             for c in range(nc):
                 t = str(rng.randint(1, 999)) if rng.random() < .4 else rng.choice(self.page_words or ["ἀνήρ"]) if self.page_words else "α"
                 t = self._text(t)
                 x = self.x0 + c * cw + S * .5
+                pg.tag = (pg.bands, c)
                 pg.put_line(reg, [(t, f, x)], yb)
+        pg.tag = None
         for r in range(nr + 1):
             yy = y0 + r * self.lh * 1.15
             pg.ops.append(("l", self.x0, yy, self.x1, yy, 2))
@@ -267,9 +276,16 @@ class Builder:
         ref_left = rng.random() < .3
         count, first = 0, True
         did_head = did_table = False
-        for p in paras:
+        band_at = rng.randint(0, 1 if self.parallel_only else 3) if self.parallel and rng.random() < self.parallel else None
+        for pi, p in enumerate(paras):
             if y > limit - self.lh:
                 break
+            if band_at is not None and pi == band_at:
+                y, ok = self.parallel_band(y, limit, paras[pi:])
+                band_at = None
+                if ok:
+                    first = False
+                    continue
             if not first and not did_head and rng.random() < .2:
                 did_head = True
                 y = self.heading(y - gap, limit)
@@ -297,6 +313,46 @@ class Builder:
             self.emit(rt, rows)
             y = ny + gap + (self.lh * .15 if quote else 0)
             first = False
+
+    def parallel_band(self, y, limit, paras):
+        """A stretch of the page set in two columns (text / parallel version), with a blank gutter.
+        Afterwards the page returns to a single column, unless the band runs to the bottom."""
+        rng, pg, S = self.rng, self.pg, self.S
+        avail = limit - y
+        if avail < self.lh * 6:
+            return y, False
+        to_end = rng.random() < .3
+        h = avail if to_end else min(avail - self.lh * 2, self.lh * rng.randint(6, 18))
+        if h < self.lh * 4:
+            return y, False
+        y += self.lh * rng.uniform(.5, 1.2)  # blank space above the band
+        bottom = y + h
+        gutter = S * rng.uniform(1.5, 4)
+        cw = (self.bw - gutter) / 2
+        srcs = [paras, self.corpus.prose(rng)[1]]
+        pg.bands += 1
+        ends = []
+        # one column may stop early, leaving blank space under it (never both)
+        short = rng.choice([0, 1]) if rng.random() < .55 else None
+        for c in (0, 1):
+            pg.tag = (pg.bands, c)
+            cbottom = y + h * rng.uniform(.3, .85) if c == short else bottom
+            x0 = self.x0 + c * (cw + gutter)
+            yy = y + (self.lh * rng.randint(1, 2) if c and rng.random() < .2 else 0)  # right column may start lower
+            for p in srcs[c]:
+                if yy > cbottom - self.lh:
+                    break
+                rows, ny = self.para_lines(p, S * 1.2, yy, cbottom - self.lh * .5, x0=x0, width=cw)
+                if not rows:
+                    break
+                self.emit("MainZone-P", rows)
+                yy = ny
+            ends.append(yy)
+        pg.tag = None
+        if rng.random() < .4:  # vertical separator rule centred in the gutter
+            xr = self.x0 + cw + gutter / 2
+            pg.ops.append(("l", xr, y - self.lh * .2, xr, max(ends) - self.lh * .2, 1))
+        return max(ends) + self.lh * rng.uniform(.4, 1.4), True  # blank space below
 
     def verse(self, y, limit):
         rng, pg, S = self.rng, self.pg, self.S
@@ -426,7 +482,7 @@ class Builder:
 def reading_order(page_lines, size):
     tol = TOL * size / 30
     hdr = sorted([l for l in page_lines if l["header"]], key=lambda l: (round(l["y"] / tol), l["x0"]))
-    rest = sorted([l for l in page_lines if not l["header"]], key=lambda l: l["y"])
+    rest = sorted([l for l in page_lines if not l["header"] and not l.get("tag")], key=lambda l: l["y"])
     rows, cur = [], []
     for l in rest:
         if cur and l["y"] - cur[0]["y"] > tol:
@@ -435,7 +491,15 @@ def reading_order(page_lines, size):
         cur.append(l)
     if cur:
         rows.append(cur)
+    items = [(r[0]["y"], sorted(r, key=lambda l: l["x0"])) for r in rows]
+    bands = {}
+    for l in page_lines:
+        if not l["header"] and l.get("tag"):
+            bands.setdefault(l["tag"][0], []).append(l)
+    for b in bands.values():  # parallel-text bands and tables are read column by column, left then right
+        b.sort(key=lambda l: (l["tag"][1], l["y"]))
+        items.append((min(l["y"] for l in b), b))
     out = hdr[:]
-    for r in rows:
-        out += sorted(r, key=lambda l: l["x0"])
+    for _, grp in sorted(items, key=lambda t: t[0]):
+        out += grp
     return out

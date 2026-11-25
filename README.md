@@ -5,9 +5,13 @@ Synthetic Greek page-segmentation data: ALTO v4 (+ JPG) in the [CLLG Closed Segm
 
 ```
     uv venv env && uv pip install -p env/bin/python -r requirements.txt
-    env/bin/python -m synth.generate --n 1000 --out out --seed 0 --workers 8 [--overlay]
+    env/bin/python -m synth.generate --n 1000 --out out --seed 0 --workers 8 [--overlay] [--parallel P | --parallel-only] [--start N]
     env/bin/python -m pytest tests
 ```
+
+Two-column pages: `--parallel P` gives each prose page a probability P of containing a parallel-text band; `--parallel-only` generates
+only such pages (prose, always with a band). `--start N` numbers pages from N and appends to an existing output dir and its `splits.tsv`.
+`examples/` holds 1000 ordinary pages (`synth_000000`–`synth_000999`) followed by 200 `--parallel-only` pages (`synth_001000`–`synth_001199`, seed 7).
 
 Output: `out/synth_NNNNNN.{jpg,xml}`, `out/splits.tsv` (train/val/test), `out/overlay/` with `--overlay`.
 Modules: `corpus` (TEI loader, cached in `cache/`), `fonts`, `apparatus` (fake critical apparatus), `layout` (templates + reading order),
@@ -20,6 +24,21 @@ Modules: `corpus` (TEI loader, cached in `cache/`), `fonts`, `apparatus` (fake c
 | <img src="docs/example.jpg" width="100%"> | <img src="docs/example_overlay.jpg" width="100%"> |
 
 The matching ALTO file is generated alongside each page as `synth_NNNNNN.xml`.
+
+## Two-column (parallel text) pages
+
+Part of a prose page is sometimes set in two columns (a text and its parallel version), then the page returns to a single column
+(or the columns run to the bottom of the page). Characteristics of the generated layout:
+
+- blank space above and below the band, and a blank gutter between the columns (1.5–4 × the font size);
+- sometimes a thin vertical separator rule centred in the gutter;
+- sometimes one column stops early (never both), leaving blank space under it, or the right column starts a line or two lower;
+- each column paragraph is a `MainZone-P`; there is no dedicated region type;
+- reading order: the left column entirely, then the right column, at the position where the band starts.
+
+| Page (JPG) | Overlay (`--overlay`) |
+|---|---|
+| <img src="docs/example_two_columns.jpg" width="100%"> | <img src="docs/example_two_columns_overlay.jpg" width="100%"> |
 
 # Segmentation types
 
@@ -60,4 +79,4 @@ Rules, applied to lines:
 3. Lines whose baselines are within 3.5 pt share a row and are read left to right. So marginal numbering and notes
    are read in the order they appear: a left-hand passage number (`245c`) or line number comes before the
    text beside it, a right-hand number (`5`, `10`) after it. Margin notes are not collected in a group at the end.
-4. Table cells are read row by row, left to right.
+4. Table cells are read column by column (top to bottom, columns left to right). Likewise a two-column parallel-text band is read left column first, then right column.

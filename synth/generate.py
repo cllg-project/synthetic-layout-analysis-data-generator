@@ -14,16 +14,16 @@ from .layout import Builder, reading_order
 _corpus = None
 
 
-def make_page(seed, skew=False):
+def make_page(seed, skew=False, parallel=0.0, parallel_only=False):
     """returns (rgb uint8 image, altoio page model)"""
     global _corpus
     _corpus = _corpus or Corpus()
     rng = random.Random(seed)
-    page = Builder(rng, _corpus).build()
-    for _ in range(3):  # a page with nothing on it is useless
-        if page.lines:
+    page = Builder(rng, _corpus, parallel=parallel, parallel_only=parallel_only).build()
+    for _ in range(8 if parallel_only else 3):  # a page with nothing on it (or, in parallel-only mode, no band) is useless
+        if page.lines and (page.bands or not parallel_only):
             break
-        page = Builder(rng, _corpus).build()
+        page = Builder(rng, _corpus, parallel=parallel, parallel_only=parallel_only).build()
     order = reading_order(page.lines, page.st.size)
     img = augment.compose(page, rng)
     M = augment.homography(rng, page.W, page.H) if skew else np.eye(3)
@@ -51,9 +51,9 @@ def make_page(seed, skew=False):
 
 
 def job(args):
-    i, seed, out, overlay, skew = args
+    i, seed, out, overlay, skew, parallel, parallel_only = args
     name = "synth_%06d" % i
-    img, model = make_page(seed, skew)
+    img, model = make_page(seed, skew, parallel, parallel_only)
     q = random.Random(seed).randint(70, 95)
     cv2.imwrite(str(out / (name + ".jpg")), cv2.cvtColor(img, cv2.COLOR_RGB2BGR), [cv2.IMWRITE_JPEG_QUALITY, q])
     altoio.write_page(out / (name + ".xml"), name + ".jpg", model, note="cllg-synth-segmentation")
@@ -82,19 +82,22 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=20)
     ap.add_argument("--out", default="out")
+    ap.add_argument("--start", type=int, default=0, help="first page index (>0 appends to an existing output dir and its splits.tsv)")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--skew", action="store_true", help="optional rotation/perspective (off: pages stay straight)")
+    ap.add_argument("--parallel", type=float, default=0.0, help="probability that a prose page has a two-column (parallel text) band")
+    ap.add_argument("--parallel-only", action="store_true", help="evaluation: only prose pages, each with a two-column band")
     ap.add_argument("--overlay", action="store_true")
     a = ap.parse_args()
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
     Corpus()  # build cache before forking
-    jobs = [(i, a.seed * 1_000_003 + i, out, a.overlay, a.skew) for i in range(a.n)]
+    jobs = [(i, a.seed * 1_000_003 + i, out, a.overlay, a.skew, a.parallel, a.parallel_only) for i in range(a.start, a.start + a.n)]
     with Pool(a.workers) as p:
         names = p.map(job, jobs, chunksize=4)
-    with open(out / "splits.tsv", "w") as f:
-        for i, n in enumerate(names):
+    with open(out / "splits.tsv", "a" if a.start else "w") as f:
+        for i, n in enumerate(names, a.start):
             f.write("%s\t%s\n" % (n, "test" if i % 20 == 0 else "val" if i % 20 == 1 else "train"))
     print("wrote", len(names), "pages to", out)
 
