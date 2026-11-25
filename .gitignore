@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+
+# Virtual environments
+env/
+.venv/
+venv/
+
+# Generated / local data
+out/
+cache/
+examples/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store

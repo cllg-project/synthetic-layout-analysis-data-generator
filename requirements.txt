@@ -1,0 +1,8 @@
+numpy
+pillow
+lxml
+pyyaml
+fonttools
+scipy
+opencv-python-headless
+pytest

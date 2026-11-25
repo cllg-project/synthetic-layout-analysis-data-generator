@@ -1,0 +1,29 @@
+# Segmentation vocabulary ("greek-ds cleaned").
+# Block tags get IDs BT<n>, line tags LT<n> in ALTO <Tags>.
+regions:
+  - MainZone-P
+  - MainZone-Continued
+  - MainZone-Head
+  - MainZone-Lg          # verse / line groups (poetry, verse quotations)
+  - MainZone-Quote       # new; justified prose quotation
+  - NumberingZone
+  - RunningTitleZone
+  - MarginTextZone
+  - TableZone            # new; ruled tables
+  - ApparatusZone        # new; replaces MainZone-Margin#att_crit
+lines:
+  - DefaultLine
+  - DefaultLine-Margin
+  - HeadingLine
+  - ApparatusLine        # new
+
+# Old greek-ds label -> cleaned label (for a later normalisation of the 473 existing pages)
+normalise_regions:
+  MainZone-Text: MainZone-P
+  "MainZone-Text#latin": MainZone-P
+  "MainZone-Continued#latin": MainZone-Continued
+  "MainZone-Margin#att_crit": ApparatusZone
+  text: MainZone-P
+normalise_lines:
+  default: DefaultLine
+  HeadingLine-Head: HeadingLine
